@@ -1,0 +1,36 @@
+# MicroGPT default hyperparameters (mirrors microgpt/config.py).
+# These values are documented for reference; the CLI reads defaults from
+# config.py and accepts overrides via flags (e.g. --n-layer, --steps).
+
+model:
+  vocab_size: 8192      # set automatically from the trained tokenizer
+  block_size: 256       # context length (tokens the model can attend to)
+  n_layer: 6            # number of transformer blocks
+  n_head: 6             # attention heads per block
+  n_embd: 384           # embedding / hidden width  (-> ~10-15M params)
+  dropout: 0.2
+  bias: false
+
+train:
+  data_path: data/wiki.txt
+  tokenizer_path: checkpoints/tokenizer.json
+  ckpt_path: checkpoints/ckpt.pt
+  loss_curve_path: outputs/loss_curve.png
+  vocab_size: 8192
+  val_split: 0.1
+
+  batch_size: 32
+  max_steps: 5000
+  learning_rate: 3.0e-4
+  min_lr: 3.0e-5
+  warmup_steps: 200
+  weight_decay: 0.1
+  grad_clip: 1.0
+  beta1: 0.9
+  beta2: 0.95
+
+  eval_interval: 250
+  eval_iters: 100
+  log_interval: 50
+  sample_tokens: 200
+  seed: 1337
