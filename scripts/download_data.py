@@ -1,8 +1,9 @@
 """Download a Wikipedia-derived text corpus (wikitext) into data/wiki.txt.
 
-Primary path uses the Hugging Face `datasets` library (wikitext-103-raw). If
-that is unavailable, falls back to streaming the smaller wikitext-2-raw archive
-directly from the public mirror.
+Primary path uses the Hugging Face `datasets` library against the canonical
+`Salesforce/wikitext` parquet repo. If `datasets` is unavailable, falls back to
+downloading the parquet shards directly from the Hub and reading them with
+pyarrow.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ from __future__ import annotations
 import io
 import logging
 import sys
-import zipfile
 from pathlib import Path
 
 import requests
@@ -19,13 +19,17 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 OUT_PATH = DATA_DIR / "wiki.txt"
 
-WIKITEXT2_URL = (
-    "https://s3.amazonaws.com/research.metamind.io/wikitext/"
-    "wikitext-2-raw-v1.zip"
-)
+HF_REPO = "Salesforce/wikitext"
+# directory listing API for the parquet shards of a given config
+HF_TREE_URL = "https://huggingface.co/api/datasets/Salesforce/wikitext/tree/main/{config}"
+HF_RESOLVE_URL = "https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/{path}"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("download_data")
+
+
+def _join(rows) -> str:
+    return "\n".join(line for line in rows if line and line.strip())
 
 
 def _via_datasets(config: str) -> str | None:
@@ -35,33 +39,45 @@ def _via_datasets(config: str) -> str | None:
         logger.info("`datasets` not installed; using direct-download fallback.")
         return None
     try:
-        logger.info("Loading wikitext/%s via Hugging Face datasets ...", config)
-        ds = load_dataset("wikitext", config, split="train")
-        text = "\n".join(line for line in ds["text"] if line.strip())
-        return text
+        logger.info("Loading %s/%s via Hugging Face datasets ...", HF_REPO, config)
+        ds = load_dataset(HF_REPO, config, split="train")
+        return _join(ds["text"])
     except Exception as exc:  # network / hub issues -> fallback
         logger.warning("datasets path failed (%s); falling back to direct download.", exc)
         return None
 
 
-def _via_direct() -> str:
-    logger.info("Downloading %s ...", WIKITEXT2_URL)
-    resp = requests.get(WIKITEXT2_URL, timeout=120)
-    resp.raise_for_status()
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        name = next(n for n in zf.namelist() if n.endswith("wiki.train.raw"))
-        with zf.open(name) as fh:
-            text = fh.read().decode("utf-8")
-    return "\n".join(line for line in text.splitlines() if line.strip())
+def _via_direct(config: str) -> str:
+    import pyarrow.parquet as pq
+
+    logger.info("Listing parquet shards for %s ...", config)
+    tree = requests.get(HF_TREE_URL.format(config=config), timeout=60).json()
+    shards = sorted(
+        e["path"] for e in tree
+        if e.get("path", "").endswith(".parquet") and "train" in e["path"]
+    )
+    if not shards:
+        raise RuntimeError(f"No train parquet shards found for config {config!r}")
+
+    rows: list[str] = []
+    for path in shards:
+        logger.info("Downloading %s ...", path)
+        resp = requests.get(HF_RESOLVE_URL.format(path=path), timeout=300)
+        resp.raise_for_status()
+        table = pq.read_table(io.BytesIO(resp.content))
+        rows.extend(table.column("text").to_pylist())
+    return _join(rows)
 
 
 def main() -> int:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    config = sys.argv[1] if len(sys.argv) > 1 else "wikitext-103-raw-v1"
+    # wikitext-2 (~12MB) is the right size for a mini GPT on a local GPU.
+    # Pass "wikitext-103-raw-v1" as an arg for a much larger (~500MB) corpus.
+    config = sys.argv[1] if len(sys.argv) > 1 else "wikitext-2-raw-v1"
 
     text = _via_datasets(config)
     if not text:
-        text = _via_direct()
+        text = _via_direct(config)
 
     OUT_PATH.write_text(text, encoding="utf-8")
     size_mb = OUT_PATH.stat().st_size / 1e6
