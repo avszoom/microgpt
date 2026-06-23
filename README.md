@@ -85,6 +85,8 @@ The device is auto-detected: **CUDA → MPS → CPU**. Force one with `--device 
 
 Tokenization (BPE) · embeddings · self-attention · positional encoding · the pretraining objective · cross-entropy loss & perplexity · optimizer/LR scheduling · why training is expensive.
 
+📖 **See [CONCEPTS.md](CONCEPTS.md)** for plain-English explanations of the internals we worked through: the vector journey (id → 384 → 8192), how Query/Key/Value work, multi-head attention, the QKV matrix sizes, the context window, the KV cache, the ~14M parameter breakdown, and the three training stages (pretraining → SFT → RLHF).
+
 ## License
 
 MIT
